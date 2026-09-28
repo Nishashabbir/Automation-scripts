@@ -1,0 +1,1 @@
+This script detects if the url is valid , sheets have website , any whatsapp contact , any chatbot on the website 

@@ -1,3 +1,5 @@
+
+This automation script removes the duplicate rows 
 the current script is tied to that specific sheet structure.
 
 It assumes:
