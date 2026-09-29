@@ -2,20 +2,16 @@ function checkWebsites() {
 
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
 
-  // YOUR SHEET:
-  // Row 2 = headers
-  // Row 3 onward = records
+  const START_ROW = 2; //when you rerun it , everytime it will start from that row
 
-  const HEADER_ROW = 2;
-  const START_ROW = 3;
-
-  // Columns
   const PHONE_COL = 3;        // C
   const WEBSITE_COL = 4;      // D
 
   const HAS_WEBSITE_COL = 5;  // E
   const HAS_WHATSAPP_COL = 6; // F
   const CHAT_WIDGET_COL = 7;  // G
+
+  const BATCH_SIZE = 30;
 
   const lastRow = sheet.getLastRow();
 
@@ -24,33 +20,61 @@ function checkWebsites() {
     return;
   }
 
-  const totalRows = lastRow - START_ROW + 1;
 
-  /*
-   * Process 30 websites at a time.
-   * This keeps the script reasonably fast and
-   * prevents one bad website from breaking everything.
-   */
-  const BATCH_SIZE = 30;
+  // ==========================================
+  // GET LAST PROCESSED ROW
+  // ==========================================
 
+  const properties =
+    PropertiesService.getScriptProperties();
 
-  for (
-    let start = 0;
-    start < totalRows;
-    start += BATCH_SIZE
-  ) {
+  let nextRow =
+    Number(
+      properties.getProperty("NEXT_ROW")
+    );
 
-    const batchSize =
-      Math.min(BATCH_SIZE, totalRows - start);
+  if (!nextRow || nextRow < START_ROW) {
+    nextRow = START_ROW;
+  }
 
 
-    // -----------------------------------------
-    // READ WEBSITE + PHONE
-    // -----------------------------------------
+  // ==========================================
+  // IF EVERYTHING IS FINISHED
+  // ==========================================
 
-    const data = sheet
+  if (nextRow > lastRow) {
+
+    Logger.log("All records are already processed.");
+
+    properties.deleteProperty("NEXT_ROW");
+
+    return;
+  }
+
+
+  // ==========================================
+  // PROCESS ONE BATCH
+  // ==========================================
+
+  const batchSize =
+    Math.min(
+      BATCH_SIZE,
+      lastRow - nextRow + 1
+    );
+
+
+  Logger.log(
+    "Starting rows " +
+    nextRow +
+    " - " +
+    (nextRow + batchSize - 1)
+  );
+
+
+  const data =
+    sheet
       .getRange(
-        START_ROW + start,
+        nextRow,
         1,
         batchSize,
         4
@@ -58,166 +82,192 @@ function checkWebsites() {
       .getValues();
 
 
-    const urls = [];
-    const phones = [];
+  const urls = [];
+  const phones = [];
 
 
-    data.forEach(row => {
+  data.forEach(row => {
 
-      urls.push(
-        normalizeWebsite(row[WEBSITE_COL - 1])
-      );
+    urls.push(
+      normalizeWebsite(
+        row[WEBSITE_COL - 1]
+      )
+    );
 
-      phones.push(
-        normalizePhone(row[PHONE_COL - 1])
-      );
+    phones.push(
+      normalizePhone(
+        row[PHONE_COL - 1]
+      )
+    );
 
-    });
-
-
-    // -----------------------------------------
-    // FETCH WEBSITES
-    // -----------------------------------------
-
-    const responses =
-      fetchWebsitesSafely(urls);
+  });
 
 
-    const output = [];
+  // ==========================================
+  // FETCH WEBSITES
+  // ==========================================
+
+  const responses =
+    fetchWebsitesSafely(urls);
 
 
-    // -----------------------------------------
-    // ANALYZE RESULTS
-    // -----------------------------------------
-
-    for (let i = 0; i < batchSize; i++) {
-
-      const response = responses[i];
-
-      let hasWebsite = false;
-      let hasWhatsApp = false;
-      let hasChatWidget = false;
+  const output = [];
 
 
-      // No website URL
-      if (!urls[i]) {
+  // ==========================================
+  // ANALYZE
+  // ==========================================
 
-        output.push([
-          false,
-          false,
-          false
-        ]);
+  for (let i = 0; i < batchSize; i++) {
 
-        continue;
-      }
+    const url = urls[i];
 
-
-      // Website request failed
-      if (!response) {
-
-        output.push([
-          false,
-          false,
-          false
-        ]);
-
-        continue;
-      }
+    const response =
+      responses[i];
 
 
-      const statusCode =
-        response.getResponseCode();
+    let hasWebsite = false;
+    let hasWhatsApp = false;
+    let hasChatWidget = false;
 
 
-      let html = "";
-
-      try {
-
-        html =
-          response
-            .getContentText()
-            .toLowerCase();
-
-      } catch (error) {
-
-        html = "";
-      }
-
-
-      // ---------------------------------------
-      // HAS WEBSITE
-      // ---------------------------------------
-
-      hasWebsite =
-        statusCode >= 200 &&
-        statusCode < 400;
-
-
-      if (hasWebsite) {
-
-        // -------------------------------------
-        // HAS WHATSAPP
-        // -------------------------------------
-
-        hasWhatsApp =
-          detectWhatsApp(html, phones[i]);
-
-
-        // -------------------------------------
-        // HAS CHAT WIDGET
-        // -------------------------------------
-
-        hasChatWidget =
-          detectChatWidget(html);
-      }
-
+    // No URL
+    if (!url) {
 
       output.push([
-        hasWebsite,
-        hasWhatsApp,
-        hasChatWidget
+        false,
+        false,
+        false
       ]);
 
+      continue;
     }
 
 
-    // -----------------------------------------
-    // WRITE TO EXISTING CHECKBOXES
-    // E = Website
-    // F = WhatsApp
-    // G = Chat Widget
-    // -----------------------------------------
+    // Request failed
+    if (!response) {
 
-    sheet
-      .getRange(
-        START_ROW + start,
-        HAS_WEBSITE_COL,
-        output.length,
-        3
-      )
-      .setValues(output);
+      Logger.log(
+        "Could not access: " + url
+      );
 
+      output.push([
+        false,
+        false,
+        false
+      ]);
 
-    Logger.log(
-      "Processed rows " +
-      (START_ROW + start) +
-      " - " +
-      (START_ROW + start + batchSize - 1)
-    );
+      continue;
+    }
 
 
-    // Small pause
-    Utilities.sleep(300);
+    const statusCode =
+      response.getResponseCode();
+
+
+    let html = "";
+
+    try {
+
+      html =
+        response
+          .getContentText()
+          .toLowerCase();
+
+    } catch (error) {
+
+      html = "";
+    }
+
+
+    // ========================================
+    // WEBSITE
+    // ========================================
+
+    hasWebsite =
+      statusCode >= 200 &&
+      statusCode < 400;
+
+
+    // ========================================
+    // WHATSAPP + CHAT
+    // ========================================
+
+    if (hasWebsite) {
+
+      hasWhatsApp =
+        detectWhatsApp(
+          html,
+          phones[i]
+        );
+
+
+      hasChatWidget =
+        detectChatWidget(html);
+    }
+
+
+    output.push([
+      hasWebsite,
+      hasWhatsApp,
+      hasChatWidget
+    ]);
+
   }
 
 
-  Logger.log(
-    "Finished checking " +
-    totalRows +
-    " records."
-  );
-}
+  // ==========================================
+  // WRITE RESULTS
+  // ==========================================
 
+  sheet
+    .getRange(
+      nextRow,
+      HAS_WEBSITE_COL,
+      output.length,
+      3
+    )
+    .setValues(output);
+
+
+  // ==========================================
+  // SAVE CHECKPOINT
+  // ==========================================
+
+  const nextStart =
+    nextRow + batchSize;
+
+
+  properties.setProperty(
+    "NEXT_ROW",
+    String(nextStart)
+  );
+
+
+  Logger.log(
+    "Processed rows " +
+    nextRow +
+    " - " +
+    (nextStart - 1)
+  );
+
+
+  if (nextStart <= lastRow) {
+
+    Logger.log(
+      "Next run will start at row " +
+      nextStart
+    );
+
+  } else {
+
+    Logger.log(
+      "ALL RECORDS PROCESSED."
+    );
+
+    properties.deleteProperty("NEXT_ROW");
+  }
+}
 
 
 // =====================================================
