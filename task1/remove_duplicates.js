@@ -117,3 +117,246 @@ function normalizeWebsite(value) {
 
   return website;
 }
+
+
+
+
+///////////////////////////////this removes the duplicates and gives a new tab of  cleaned sheet
+function cleanDuplicateRecords() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const source = ss.getActiveSheet();
+
+  if (source.getName() === "Cleaned Data") {
+    SpreadsheetApp.getUi().alert("Run this from your original data sheet.");
+    return;
+  }
+
+  const data = source.getDataRange().getValues();
+
+  if (data.length < 2) {
+    SpreadsheetApp.getUi().alert("No records found.");
+    return;
+  }
+
+  const headers = data[0].map(h => String(h).trim());
+  const rows = data.slice(1);
+
+  // Find columns
+  const phoneCol = findHeader(headers, ["phone", "mobile", "telephone"]);
+  const websiteCol = findHeader(headers, ["website", "web site", "url"]);
+  const emailCol = findHeader(headers, ["email", "e-mail"]);
+  const nameCol = findHeader(headers, ["name", "business name", "company"]);
+
+  // -----------------------------------------
+  // Maps for duplicate detection
+  // -----------------------------------------
+
+  const phoneMap = new Map();
+  const websiteMap = new Map();
+  const emailMap = new Map();
+  const nameMap = new Map();
+
+  const records = [];
+
+  rows.forEach((row, index) => {
+
+    // Ignore completely empty rows
+    if (!row.some(v => String(v).trim() !== "")) return;
+
+    const record = {
+      row: row,
+      originalIndex: index,
+      phone: phoneCol >= 0 ? normalizePhone(row[phoneCol]) : "",
+      website: websiteCol >= 0 ? normalizeWebsite(row[websiteCol]) : "",
+      email: emailCol >= 0 ? normalizeEmail(row[emailCol]) : "",
+      name: nameCol >= 0 ? normalizeName(row[nameCol]) : "",
+      completeness: getCompleteness(row)
+    };
+
+    records.push(record);
+  });
+
+  // -----------------------------------------
+  // Build groups of duplicates
+  // -----------------------------------------
+
+  const duplicateGroups = [];
+  const used = new Set();
+
+  records.forEach((record, i) => {
+
+    if (used.has(i)) return;
+
+    const group = [i];
+    used.add(i);
+
+    records.forEach((other, j) => {
+
+      if (i === j || used.has(j)) return;
+
+      // VERY STRONG duplicate signals
+      const samePhone =
+        record.phone &&
+        other.phone &&
+        record.phone === other.phone;
+
+      const sameEmail =
+        record.email &&
+        other.email &&
+        record.email === other.email;
+
+      const sameWebsite =
+        record.website &&
+        other.website &&
+        record.website === other.website;
+
+      // Any one of these is enough
+      if (samePhone || sameEmail || sameWebsite) {
+        group.push(j);
+        used.add(j);
+      }
+    });
+
+    duplicateGroups.push(group);
+  });
+
+  // -----------------------------------------
+  // Keep the most complete record
+  // -----------------------------------------
+
+  const cleaned = [];
+
+  duplicateGroups.forEach(group => {
+
+    let best = group[0];
+
+    group.forEach(index => {
+
+      if (
+        records[index].completeness >
+        records[best].completeness
+      ) {
+        best = index;
+      }
+
+    });
+
+    cleaned.push(records[best].row);
+  });
+
+  // -----------------------------------------
+  // Create / replace Cleaned Data
+  // -----------------------------------------
+
+  let output = ss.getSheetByName("Cleaned Data");
+
+  if (output) {
+    output.clear();
+  } else {
+    output = ss.insertSheet("Cleaned Data");
+  }
+
+  output
+    .getRange(1, 1, cleaned.length + 1, headers.length)
+    .setValues([headers, ...cleaned]);
+
+  output.setFrozenRows(1);
+
+  // Copy header formatting
+  source
+    .getRange(1, 1, 1, headers.length)
+    .copyTo(
+      output.getRange(1, 1, 1, headers.length),
+      SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+      false
+    );
+
+  output.autoResizeColumns(1, headers.length);
+
+  const removed = records.length - cleaned.length;
+
+  SpreadsheetApp.getUi().alert(
+    "Cleaning complete!\n\n" +
+    "Original records: " + records.length + "\n" +
+    "Clean records: " + cleaned.length + "\n" +
+    "Duplicates removed: " + removed
+  );
+}
+
+
+// -----------------------------------------
+// NORMALIZATION
+// -----------------------------------------
+
+function normalizePhone(value) {
+
+  if (value === null || value === undefined) return "";
+
+  return String(value)
+    .replace(/\D/g, "");
+}
+
+
+function normalizeEmail(value) {
+
+  if (!value) return "";
+
+  return String(value)
+    .toLowerCase()
+    .trim();
+}
+
+
+function normalizeWebsite(value) {
+
+  if (!value) return "";
+
+  let url = String(value)
+    .toLowerCase()
+    .trim();
+
+  url = url.replace(/^https?:\/\//, "");
+  url = url.replace(/^www\./, "");
+  url = url.replace(/\/+$/, "");
+
+  // Remove tracking/query parameters
+  url = url.split("?")[0];
+  url = url.split("#")[0];
+
+  return url;
+}
+
+
+function normalizeName(value) {
+
+  if (!value) return "";
+
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+
+function getCompleteness(row) {
+
+  return row.filter(v =>
+    v !== null &&
+    v !== undefined &&
+    String(v).trim() !== ""
+  ).length;
+}
+
+
+function findHeader(headers, possibleNames) {
+
+  for (let i = 0; i < headers.length; i++) {
+
+    const header = headers[i].toLowerCase().trim();
+
+    if (possibleNames.includes(header)) {
+      return i;
+    }
+  }
+
+  return -1;
+}
